@@ -1,0 +1,38 @@
+receivers:
+  # Simple OTLP receiver to accept data
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # Basic batch processor
+  batch:
+
+exporters:
+  # Our custom otlpeek exporter
+  otlpeek:
+    endpoint: "0.0.0.0:8080"
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlpeek]
+    
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlpeek]
+    
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlpeek]
+
+  telemetry:
+    logs:
+      level: debug 
