@@ -135,6 +135,7 @@ func (e *Exporter) pushLogs(ctx context.Context, ld plog.Logs) error {
 
 		entry := fmt.Sprintf("[%s] Resource: %v, Logs: %d",
 			time.Now().Format("15:04:05"), resourceAttrs, rl.ScopeLogs().Len())
+		fmt.Printf("Appending log entry: %q\n", entry)
 		e.logs = append(e.logs, entry)
 	}
 
@@ -203,12 +204,15 @@ func (e *Exporter) handleLogs(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
 	fmt.Fprintf(w, "=== LOGS ===\n\n")
 
+	fmt.Printf("handleLogs: e.logs has %d entries\n", len(e.logs))
+
 	if len(e.logs) == 0 {
 		fmt.Fprintf(w, "No logs received yet.\n")
 		return
 	}
 
 	for i := len(e.logs) - 1; i >= 0; i-- {
+		fmt.Printf("handleLogs: displaying entry: %q\n", e.logs[i])
 		fmt.Fprintf(w, "%s\n", e.logs[i])
 	}
 }

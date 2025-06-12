@@ -18,15 +18,6 @@ exporters:
 
 service:
   pipelines:
-    traces:
-      receivers: [otlp]
-      processors: [batch]
-      exporters: [otlpeek]
-    
-    metrics:
-      receivers: [otlp]
-      processors: [batch]
-      exporters: [otlpeek]
     
     logs:
       receivers: [otlp]
