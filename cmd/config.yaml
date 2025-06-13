@@ -1,5 +1,4 @@
 receivers:
-  # Simple OTLP receiver to accept data
   otlp:
     protocols:
       grpc:
@@ -8,13 +7,13 @@ receivers:
         endpoint: 0.0.0.0:4318
 
 processors:
-  # Basic batch processor
   batch:
+    timeout: 1s
+    send_batch_size: 1024
 
 exporters:
-  # Our custom otlpeek exporter
   otlpeek:
-    endpoint: "0.0.0.0:8080"
+    endpoint: ":8080"
 
 service:
   pipelines:
@@ -33,4 +32,6 @@ service:
 
   telemetry:
     logs:
-      level: debug 
+      level: debug
+    metrics:
+      level: debug

@@ -2,7 +2,7 @@ module github.com/krisztianfekete/otlpeek
 
 go 1.23.0
 
-toolchain go1.23.10
+//toolchain go1.23.9
 
 require (
 	go.opentelemetry.io/collector/component v1.32.0

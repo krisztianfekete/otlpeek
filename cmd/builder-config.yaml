@@ -1,0 +1,15 @@
+dist:
+  name: otlpeek
+  description: "OTLPeek - OpenTelemetry Stream Viewer"
+  output_path: ./dist
+  version: 0.0.1
+
+receivers:
+  - gomod: go.opentelemetry.io/collector/receiver/otlpreceiver v0.126.0
+
+exporters:
+  - gomod: github.com/krisztianfekete/otlpeek v0.0.1
+    path: ./
+
+processors:
+  - gomod: go.opentelemetry.io/collector/processor/batchprocessor v0.126.0
