@@ -24,9 +24,9 @@ var (
 // sharedData holds the data that all exporter instances share
 type sharedData struct {
 	mu           sync.RWMutex
-	traces       []string
-	metrics      []string
-	logs         []string
+	traces       map[string][]string // key: resource attributes string, value: gRPC messages
+	metrics      map[string][]string // key: resource attributes string, value: gRPC messages
+	logs         map[string][]string // key: resource attributes string, value: gRPC messages
 	lastActivity time.Time
 }
 
@@ -51,9 +51,9 @@ func (e *Exporter) start(ctx context.Context, host component.Host) error {
 	globalServerOnce.Do(func() {
 		// Initialize global data
 		globalData = &sharedData{
-			traces:       make([]string, 0),
-			metrics:      make([]string, 0),
-			logs:         make([]string, 0),
+			traces:       make(map[string][]string),
+			metrics:      make(map[string][]string),
+			logs:         make(map[string][]string),
 			lastActivity: time.Now(),
 		}
 
@@ -98,15 +98,64 @@ func (e *Exporter) pushTraces(ctx context.Context, td ptrace.Traces) error {
 	for i := 0; i < td.ResourceSpans().Len(); i++ {
 		rs := td.ResourceSpans().At(i)
 		resourceAttrs := rs.Resource().Attributes().AsRaw()
+		resourceKey := fmt.Sprintf("%v", resourceAttrs)
 
-		entry := fmt.Sprintf("[%s] Resource: %v, Spans: %d",
-			time.Now().Format("15:04:05"), resourceAttrs, rs.ScopeSpans().Len())
-		globalData.traces = append(globalData.traces, entry)
-	}
+		// Count total spans across all scope spans for this resource
+		totalSpans := 0
+		for j := 0; j < rs.ScopeSpans().Len(); j++ {
+			ss := rs.ScopeSpans().At(j)
+			totalSpans += ss.Spans().Len()
+		}
 
-	// Keep only last 100 entries
-	if len(globalData.traces) > 100 {
-		globalData.traces = globalData.traces[len(globalData.traces)-100:]
+		// Create one summary entry for this gRPC message
+		entry := fmt.Sprintf("[%s] Traces: %d spans",
+			time.Now().Format("15:04:05"), totalSpans)
+
+		// Initialize the resource group if it doesn't exist
+		if globalData.traces[resourceKey] == nil {
+			globalData.traces[resourceKey] = []string{}
+		}
+		globalData.traces[resourceKey] = append(globalData.traces[resourceKey], entry)
+
+		// Add detailed information as sub-entries
+		for j := 0; j < rs.ScopeSpans().Len(); j++ {
+			ss := rs.ScopeSpans().At(j)
+			scopeName := ss.Scope().Name()
+			scopeVersion := ss.Scope().Version()
+
+			scopeEntry := fmt.Sprintf("  Scope: %s (version: %s)", scopeName, scopeVersion)
+			globalData.traces[resourceKey] = append(globalData.traces[resourceKey], scopeEntry)
+
+			for k := 0; k < ss.Spans().Len(); k++ {
+				span := ss.Spans().At(k)
+				spanAttrs := span.Attributes().AsRaw()
+
+				spanEntry := fmt.Sprintf("    Span: %s (ID: %x, TraceID: %x)",
+					span.Name(), span.SpanID(), span.TraceID())
+				globalData.traces[resourceKey] = append(globalData.traces[resourceKey], spanEntry)
+
+				if len(spanAttrs) > 0 {
+					attrEntry := fmt.Sprintf("      Attributes: %v", spanAttrs)
+					globalData.traces[resourceKey] = append(globalData.traces[resourceKey], attrEntry)
+				}
+
+				if span.Kind() != ptrace.SpanKindUnspecified {
+					kindEntry := fmt.Sprintf("      Kind: %s", span.Kind().String())
+					globalData.traces[resourceKey] = append(globalData.traces[resourceKey], kindEntry)
+				}
+
+				if span.Status().Code() != ptrace.StatusCodeUnset {
+					statusEntry := fmt.Sprintf("      Status: %s - %s",
+						span.Status().Code().String(), span.Status().Message())
+					globalData.traces[resourceKey] = append(globalData.traces[resourceKey], statusEntry)
+				}
+			}
+		}
+
+		// Keep only last 100 entries per resource group
+		if len(globalData.traces[resourceKey]) > 100 {
+			globalData.traces[resourceKey] = globalData.traces[resourceKey][len(globalData.traces[resourceKey])-100:]
+		}
 	}
 
 	e.logger.Debug("Received traces", zap.Int("count", td.SpanCount()))
@@ -123,15 +172,104 @@ func (e *Exporter) pushMetrics(ctx context.Context, md pmetric.Metrics) error {
 	for i := 0; i < md.ResourceMetrics().Len(); i++ {
 		rm := md.ResourceMetrics().At(i)
 		resourceAttrs := rm.Resource().Attributes().AsRaw()
+		resourceKey := fmt.Sprintf("%v", resourceAttrs)
 
-		entry := fmt.Sprintf("[%s] Resource: %v, Metrics: %d",
-			time.Now().Format("15:04:05"), resourceAttrs, rm.ScopeMetrics().Len())
-		globalData.metrics = append(globalData.metrics, entry)
-	}
+		// Count total metrics across all scope metrics for this resource
+		totalMetrics := 0
+		for j := 0; j < rm.ScopeMetrics().Len(); j++ {
+			sm := rm.ScopeMetrics().At(j)
+			totalMetrics += sm.Metrics().Len()
+		}
 
-	// Keep only last 100 entries
-	if len(globalData.metrics) > 100 {
-		globalData.metrics = globalData.metrics[len(globalData.metrics)-100:]
+		// Create one summary entry for this gRPC message
+		entry := fmt.Sprintf("[%s] Metrics: %d metrics",
+			time.Now().Format("15:04:05"), totalMetrics)
+
+		// Initialize the resource group if it doesn't exist
+		if globalData.metrics[resourceKey] == nil {
+			globalData.metrics[resourceKey] = []string{}
+		}
+		globalData.metrics[resourceKey] = append(globalData.metrics[resourceKey], entry)
+
+		// Add detailed information as sub-entries
+		for j := 0; j < rm.ScopeMetrics().Len(); j++ {
+			sm := rm.ScopeMetrics().At(j)
+			scopeName := sm.Scope().Name()
+			scopeVersion := sm.Scope().Version()
+
+			scopeEntry := fmt.Sprintf("  Scope: %s (version: %s)", scopeName, scopeVersion)
+			globalData.metrics[resourceKey] = append(globalData.metrics[resourceKey], scopeEntry)
+
+			for k := 0; k < sm.Metrics().Len(); k++ {
+				metric := sm.Metrics().At(k)
+				metricEntry := fmt.Sprintf("    Metric: %s (%s)", metric.Name(), metric.Type().String())
+				globalData.metrics[resourceKey] = append(globalData.metrics[resourceKey], metricEntry)
+
+				// Add metric description if available
+				if metric.Description() != "" {
+					descEntry := fmt.Sprintf("      Description: %s", metric.Description())
+					globalData.metrics[resourceKey] = append(globalData.metrics[resourceKey], descEntry)
+				}
+
+				// Add unit if available
+				if metric.Unit() != "" {
+					unitEntry := fmt.Sprintf("      Unit: %s", metric.Unit())
+					globalData.metrics[resourceKey] = append(globalData.metrics[resourceKey], unitEntry)
+				}
+
+				// Process different metric types
+				switch metric.Type() {
+				case pmetric.MetricTypeGauge:
+					dps := metric.Gauge().DataPoints()
+					for l := 0; l < dps.Len(); l++ {
+						dp := dps.At(l)
+						dpAttrs := dp.Attributes().AsRaw()
+						dpEntry := fmt.Sprintf("      DataPoint: %v (attrs: %v)", dp.DoubleValue(), dpAttrs)
+						globalData.metrics[resourceKey] = append(globalData.metrics[resourceKey], dpEntry)
+					}
+				case pmetric.MetricTypeSum:
+					dps := metric.Sum().DataPoints()
+					for l := 0; l < dps.Len(); l++ {
+						dp := dps.At(l)
+						dpAttrs := dp.Attributes().AsRaw()
+						dpEntry := fmt.Sprintf("      DataPoint: %v (attrs: %v)", dp.DoubleValue(), dpAttrs)
+						globalData.metrics[resourceKey] = append(globalData.metrics[resourceKey], dpEntry)
+					}
+				case pmetric.MetricTypeHistogram:
+					dps := metric.Histogram().DataPoints()
+					for l := 0; l < dps.Len(); l++ {
+						dp := dps.At(l)
+						dpAttrs := dp.Attributes().AsRaw()
+						dpEntry := fmt.Sprintf("      DataPoint: count=%d, sum=%v (attrs: %v)",
+							dp.Count(), dp.Sum(), dpAttrs)
+						globalData.metrics[resourceKey] = append(globalData.metrics[resourceKey], dpEntry)
+					}
+				case pmetric.MetricTypeExponentialHistogram:
+					dps := metric.ExponentialHistogram().DataPoints()
+					for l := 0; l < dps.Len(); l++ {
+						dp := dps.At(l)
+						dpAttrs := dp.Attributes().AsRaw()
+						dpEntry := fmt.Sprintf("      DataPoint: count=%d, sum=%v (attrs: %v)",
+							dp.Count(), dp.Sum(), dpAttrs)
+						globalData.metrics[resourceKey] = append(globalData.metrics[resourceKey], dpEntry)
+					}
+				case pmetric.MetricTypeSummary:
+					dps := metric.Summary().DataPoints()
+					for l := 0; l < dps.Len(); l++ {
+						dp := dps.At(l)
+						dpAttrs := dp.Attributes().AsRaw()
+						dpEntry := fmt.Sprintf("      DataPoint: count=%d, sum=%v (attrs: %v)",
+							dp.Count(), dp.Sum(), dpAttrs)
+						globalData.metrics[resourceKey] = append(globalData.metrics[resourceKey], dpEntry)
+					}
+				}
+			}
+		}
+
+		// Keep only last 100 entries per resource group
+		if len(globalData.metrics[resourceKey]) > 100 {
+			globalData.metrics[resourceKey] = globalData.metrics[resourceKey][len(globalData.metrics[resourceKey])-100:]
+		}
 	}
 
 	e.logger.Debug("Received metrics", zap.Int("count", md.MetricCount()))
@@ -148,19 +286,115 @@ func (e *Exporter) pushLogs(ctx context.Context, ld plog.Logs) error {
 	for i := 0; i < ld.ResourceLogs().Len(); i++ {
 		rl := ld.ResourceLogs().At(i)
 		resourceAttrs := rl.Resource().Attributes().AsRaw()
+		resourceKey := fmt.Sprintf("%v", resourceAttrs)
 
-		entry := fmt.Sprintf("[%s] Resource: %v, Logs: %d",
-			time.Now().Format("15:04:05"), resourceAttrs, rl.ScopeLogs().Len())
-		globalData.logs = append(globalData.logs, entry)
-	}
+		// Count total log records across all scope logs for this resource
+		totalLogs := 0
+		for j := 0; j < rl.ScopeLogs().Len(); j++ {
+			sl := rl.ScopeLogs().At(j)
+			totalLogs += sl.LogRecords().Len()
+		}
 
-	// Keep only last 100 entries
-	if len(globalData.logs) > 100 {
-		globalData.logs = globalData.logs[len(globalData.logs)-100:]
+		// Create one summary entry for this gRPC message
+		entry := fmt.Sprintf("[%s] Logs: %d log records",
+			time.Now().Format("15:04:05"), totalLogs)
+
+		// Initialize the resource group if it doesn't exist
+		if globalData.logs[resourceKey] == nil {
+			globalData.logs[resourceKey] = []string{}
+		}
+		globalData.logs[resourceKey] = append(globalData.logs[resourceKey], entry)
+
+		// Add detailed information as sub-entries
+		for j := 0; j < rl.ScopeLogs().Len(); j++ {
+			sl := rl.ScopeLogs().At(j)
+			scopeName := sl.Scope().Name()
+			scopeVersion := sl.Scope().Version()
+
+			scopeEntry := fmt.Sprintf("  Scope: %s (version: %s)", scopeName, scopeVersion)
+			globalData.logs[resourceKey] = append(globalData.logs[resourceKey], scopeEntry)
+
+			for k := 0; k < sl.LogRecords().Len(); k++ {
+				logRecord := sl.LogRecords().At(k)
+
+				// Basic log record info
+				logEntry := fmt.Sprintf("    Log: %s", logRecord.Body().AsString())
+				globalData.logs[resourceKey] = append(globalData.logs[resourceKey], logEntry)
+
+				// Timestamp
+				if logRecord.Timestamp() != 0 {
+					tsEntry := fmt.Sprintf("      Timestamp: %s",
+						time.Unix(0, int64(logRecord.Timestamp())).Format("2006-01-02 15:04:05.000000000"))
+					globalData.logs[resourceKey] = append(globalData.logs[resourceKey], tsEntry)
+				}
+
+				// Observed timestamp
+				if logRecord.ObservedTimestamp() != 0 {
+					otsEntry := fmt.Sprintf("      Observed: %s",
+						time.Unix(0, int64(logRecord.ObservedTimestamp())).Format("2006-01-02 15:04:05.000000000"))
+					globalData.logs[resourceKey] = append(globalData.logs[resourceKey], otsEntry)
+				}
+
+				// Severity
+				if logRecord.SeverityNumber() != plog.SeverityNumberUnspecified {
+					sevEntry := fmt.Sprintf("      Severity: %s (%s)",
+						logRecord.SeverityNumber().String(), logRecord.SeverityText())
+					globalData.logs[resourceKey] = append(globalData.logs[resourceKey], sevEntry)
+				}
+
+				// Attributes
+				logAttrs := logRecord.Attributes().AsRaw()
+				if len(logAttrs) > 0 {
+					attrEntry := fmt.Sprintf("      Attributes: %v", logAttrs)
+					globalData.logs[resourceKey] = append(globalData.logs[resourceKey], attrEntry)
+				}
+
+				// Trace and span context
+				if len(logRecord.TraceID()) > 0 {
+					traceEntry := fmt.Sprintf("      TraceID: %x", logRecord.TraceID())
+					globalData.logs[resourceKey] = append(globalData.logs[resourceKey], traceEntry)
+				}
+				if len(logRecord.SpanID()) > 0 {
+					spanEntry := fmt.Sprintf("      SpanID: %x", logRecord.SpanID())
+					globalData.logs[resourceKey] = append(globalData.logs[resourceKey], spanEntry)
+				}
+
+				// Event name if present
+				if logRecord.EventName() != "" {
+					eventEntry := fmt.Sprintf("      Event: %s", logRecord.EventName())
+					globalData.logs[resourceKey] = append(globalData.logs[resourceKey], eventEntry)
+				}
+			}
+		}
+
+		// Keep only last 100 entries per resource group
+		if len(globalData.logs[resourceKey]) > 100 {
+			globalData.logs[resourceKey] = globalData.logs[resourceKey][len(globalData.logs[resourceKey])-100:]
+		}
 	}
 
 	e.logger.Debug("Received logs", zap.Int("count", ld.LogRecordCount()))
 	return nil
+}
+
+// countMainEntries counts only the main gRPC message entries (lines starting with [time])
+func countMainEntries(entries []string) int {
+	count := 0
+	for _, entry := range entries {
+		if len(entry) > 0 && entry[0] == '[' {
+			count++
+		}
+	}
+	return count
+}
+
+// countTotalMainEntries counts main entries across all resource groups
+func countTotalMainEntries(resourceGroups map[string][]string) int {
+	total := 0
+	for _, entries := range resourceGroups {
+		total += countMainEntries(entries)
+	}
+	return total
 }
 
 // HTTP handlers
@@ -172,9 +406,9 @@ func (e *Exporter) handleRoot(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "OTLPeek - OpenTelemetry Stream Viewer\n")
 	fmt.Fprintf(w, "Last activity: %s\n", globalData.lastActivity.Format("2006-01-02 15:04:05"))
 	fmt.Fprintf(w, "\nSummary:\n")
-	fmt.Fprintf(w, "  Traces:  %d entries  (browse: /traces)\n", len(globalData.traces))
-	fmt.Fprintf(w, "  Metrics: %d entries  (browse: /metrics)\n", len(globalData.metrics))
-	fmt.Fprintf(w, "  Logs:    %d entries  (browse: /logs)\n", len(globalData.logs))
+	fmt.Fprintf(w, "  Traces:  %d entries  (browse: /traces)\n", countTotalMainEntries(globalData.traces))
+	fmt.Fprintf(w, "  Metrics: %d entries  (browse: /metrics)\n", countTotalMainEntries(globalData.metrics))
+	fmt.Fprintf(w, "  Logs:    %d entries  (browse: /logs)\n", countTotalMainEntries(globalData.logs))
 	fmt.Fprintf(w, "\nUse /traces, /metrics, or /logs to view details.\n")
 }
 
@@ -190,8 +424,13 @@ func (e *Exporter) handleTraces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for i := len(globalData.traces) - 1; i >= 0; i-- {
-		fmt.Fprintf(w, "%s\n", globalData.traces[i])
+	// Display traces grouped by resource
+	for resourceKey, entries := range globalData.traces {
+		fmt.Fprintf(w, "Resource: %s\n", resourceKey)
+		for i := len(entries) - 1; i >= 0; i-- {
+			fmt.Fprintf(w, "%s\n", entries[i])
+		}
+		fmt.Fprintf(w, "\n")
 	}
 }
 
@@ -207,8 +446,13 @@ func (e *Exporter) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for i := len(globalData.metrics) - 1; i >= 0; i-- {
-		fmt.Fprintf(w, "%s\n", globalData.metrics[i])
+	// Display metrics grouped by resource
+	for resourceKey, entries := range globalData.metrics {
+		fmt.Fprintf(w, "Resource: %s\n", resourceKey)
+		for i := len(entries) - 1; i >= 0; i-- {
+			fmt.Fprintf(w, "%s\n", entries[i])
+		}
+		fmt.Fprintf(w, "\n")
 	}
 }
 
@@ -224,7 +468,12 @@ func (e *Exporter) handleLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for i := len(globalData.logs) - 1; i >= 0; i-- {
-		fmt.Fprintf(w, "%s\n", globalData.logs[i])
+	// Display logs grouped by resource
+	for resourceKey, entries := range globalData.logs {
+		fmt.Fprintf(w, "Resource: %s\n", resourceKey)
+		for i := len(entries) - 1; i >= 0; i-- {
+			fmt.Fprintf(w, "%s\n", entries[i])
+		}
+		fmt.Fprintf(w, "\n")
 	}
 }
