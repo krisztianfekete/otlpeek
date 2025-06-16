@@ -1,11 +1,17 @@
-# OTLPeek Exporter
+# otlpeek exporter
 
-## Build the Collector
+## Build it into a Collector
 
 You can build the custom OpenTelemetry Collector with the otlpeek exporter using:
 
 ```
 ocb --config builder-config.yaml
+```
+
+Then run it:
+
+```
+dist/otlpeek --config=cmd/config.yaml
 ```
 
 ## Send a Sample Log Request
