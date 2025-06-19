@@ -21,7 +21,7 @@ RUN go install go.opentelemetry.io/collector/cmd/builder@v0.126.0
 RUN builder --config=cmd/builder-config.yaml
 
 # Runtime stage
-FROM alpine:latest
+FROM alpine:3.22.0
 
 # Install ca-certificates for HTTPS requests
 RUN apk --no-cache add ca-certificates
@@ -44,4 +44,4 @@ EXPOSE 8080 4317 4318
 
 # Run the collector
 ENTRYPOINT ["/usr/local/bin/otlpeek"]
-CMD ["--config", "/etc/otlpeek/config.yaml"] 
+CMD ["--config", "/etc/otlpeek/config.yaml"]
