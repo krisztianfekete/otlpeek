@@ -37,6 +37,8 @@
           gomodifytags
         ] ++ (with ocbPkgs; [
           opentelemetry-collector-builder
+          gci
+          gofumpt
         ]);
       };
     });
